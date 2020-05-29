@@ -1,0 +1,243 @@
+---
+title: "GEO_Code - GPS Trajectory Data Example"
+author: "J. Dayton"
+date: "5/13/2020"
+output:
+  html_document:
+    df_print: paged
+---
+
+Source of data and the following data description: <https://archive.ics.uci.edu/ml/datasets/GPS+Trajectories>.
+
+*Abstract:* The dataset has been feed by Android app called Go!Track. It is available at Goolge Play Store.
+
+## STEP 0: Load Libraries
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(leaflet)
+library(knitr)
+library(lubridate)
+library(RColorBrewer)
+
+source("custFunc.R")
+```
+
+## STEP 1: Import relevant data set.
+
+### Get the GPS Activity Data
+
+Source of data and the following data description: <https://archive.ics.uci.edu/ml/datasets/GPS+Trajectories>.
+
+*Data Set Information:*
+
+The dataset is composed by two tables. The first table go_track_tracks presents general attributes and each instance has one trajectory that is represented by the table go_track_trackspoints.
+
+
+*Attribute Information:*
+
+(1) go_track_tracks.csv: a list of trajectories
+* id_android - it represents the device used to capture the instance;
+* speed - it represents the average speed (Km/H)
+* distance - it represent the total distance (Km)
+* rating - it is an evaluation parameter. Evaluation the traffic is a way to verify the volunteers perception about the traffic during the travel, in other words, if volunteers move to some place and face traffic jam, maybe they will evaluate 'bad'. (3- good, 2- normal, 1-bad).
+* rating_bus - it is other evaluation parameter. (1 - The amount of people inside the bus is little, 2 - The bus is not crowded, 3- The bus is crowded.
+* rating_weather - it is another evaluation parameter. ( 2- sunny, 1- raining).
+* car_or_bus - (1 - car, 2-bus)
+* linha - information about the bus that does the pathway
+
+(2) go_track_trackspoints.csv: localization points of each trajectory
+* id: unique key to identify each point
+* latitude: latitude from where the point is
+* longitude: longitude from where the point is
+* track_id: identify the trajectory which the point belong
+* time: datetime when the point was collected (GMT-3)
+
+```{r getData}
+##Load the data
+dfTracks <- read.csv("./GPS_Trajectory/go_track_tracks.csv", 
+                     stringsAsFactors = FALSE)
+dfPoints <- read.csv("./GPS_Trajectory/go_track_trackspoints.csv", 
+                     stringsAsFactors = FALSE)
+```
+
+
+
+### Clean Data
+
+Check for NA values and richness of 'tracks'.
+
+```{r renameSort}
+kable(head(dfTracks))
+kable(head(dfPoints))
+
+#Rename 'id' to 'index' for dfPoints to elleviate confusion, for this file we want 'track_id'
+dfPoints <- dfPoints %>% rename(index = id, id = track_id)
+
+#order the two data frames and check to ensure that the respective ID's align
+dfPoints <- dfPoints %>% arrange(id)
+dfTracks <- dfTracks %>% arrange(id)
+
+#Check which id's will not align, and what index they are for diagnosis
+which(!(unique(dfTracks$id) == unique(dfPoints$id)))
+sum(!(unique(dfTracks$id) == unique(dfPoints$id)))
+# unique(dfTracks$id)
+# unique(dfPoints$track_id)
+# summary(dfTracks)
+# summary(dfPoints)
+```
+
+## STEP 2. Aggregate data by country (or other location).
+
+
+With the respective IDs aligned between two df's, join the two together
+
+``` {r joinDFs}
+#Join based on 'id' 
+df <- left_join(dfPoints, dfTracks, by = "id")
+rm(dfPoints); rm(dfTracks)
+
+df <- df %>%
+   rename(user = id_android, date_time = time.x, lat = latitude, lon = longitude) %>%
+   select(id, user, lat, lon, date_time)
+#Fix the time variable
+df$date_time <- ymd_hms(df$date_time)
+#Fix user from 0-27, to 1-28 and make catagorical (factor)
+df$user <- as.factor(df$user + 1)
+
+dim(df)
+kable(head(df))
+```
+
+
+## STEP 3. Merge data from data set to map data.
+
+## Find the range of Lat and Lon
+
+```{r baseMapRange}
+range(df$lon)
+range(df$lat)
+```
+
+```{r getBaseMap, echo=TRUE, warning=FALSE}
+labs <- lapply(seq(nrow(df)), function(i) {
+   paste0( '<p><b>USER: </b>', df[i, "user"],
+           '</p><p><b>DATE: </b>', format(df[i, "date_time"], format="%d %b %y"), 
+           '</p><p><b>TIME: </b>', format(df[i, "date_time"], format = "%H:%M"), 
+           '</p>' ) 
+   } )
+
+leafMap <- df %>% 
+  leaflet() %>% 
+  addTiles() %>%
+  setView(lat = mean(df$lat, na.rm = TRUE),
+          lng = mean(df$lon, na.rm = TRUE),
+          zoom = 6) %>%
+   addCircleMarkers(lng = ~lon, lat = ~lat,  
+              color = "red", opacity = 1, radius = 0.2,
+              label = lapply(labs, htmltools::HTML) )
+leafMap
+```
+
+## STEP 4. Create the plot(s).
+
+The 
+
+``` {r plotBase, warning=FALSE}
+user_id <- unique(df$user)
+user_pal <- colorFactor(c(brewer.pal(n = length(user_id), 
+                                     name = "Dark2")), 
+                        user_id) #Accent, Dark2, Paired, Pastel1, Pastel2, Set1, Set2, Set3.
+
+leafMap2 <- df %>% 
+  leaflet() %>% 
+  addTiles() %>%
+  setView(lat = mean(df$lat, na.rm = TRUE),
+          lng = mean(df$lon, na.rm = TRUE),
+          zoom = 12) %>%
+   addCircleMarkers(lng = ~lon, lat = ~lat,  
+              color = ~user_pal(user), opacity = 1, radius = 0.15,
+              label = lapply(labs, htmltools::HTML) ) %>% 
+   addLayersControl(overlayGroups = c(user_id))
+leafMap2
+```
+
+# ggmap Approach
+
+## STEP 4. Create the plot(s).
+
+```{r createGGPlot}
+
+```
+
+
+```{r testCase}
+dfDup <- data.frame(user = df$user, date_time = df$date_time)
+dfDup$date_time <- dmy(format(dfDup$date_time, format = "%d %b %y"))
+dfDup <- dfDup[!duplicated(dfDup), ]
+#which dates
+dfDup$date_time[duplicated(dfDup$date_time)]
+```
+
+```{r simplifiedPlot}
+dfplot <- df %>%
+   filter(format(date_time, format = "%m-%d-%Y") == "05-29-2015") %>%
+   arrange(user, date_time) 
+
+dfplot$user <-    plyr::revalue(dfplot$user, c("2" = "Alison", "11" = "Rodd", 
+                                               "13" = "Gregory"))   
+dfplot$user <- as.factor(as.character(dfplot$user))
+
+labs <- lapply(seq(nrow(dfplot)), function(i) {
+   paste0( '<p><b>USER: </b>', dfplot[i, "user"],
+           '</p><p><b>DATE: </b>', format(dfplot[i, "date_time"], format="%d %b %y"), 
+           '</p><p><b>TIME: </b>', format(dfplot[i, "date_time"], format = "%H:%M"), 
+           '</p>' ) 
+   } )
+
+user_id <- unique(dfplot$user)
+user_pal <- colorFactor(c(brewer.pal(n = length(user_id), 
+                                     name = "Set1")), 
+                        user_id) #Accent, Dark2, Paired, Pastel1, Pastel2, Set1, Set2, Set3.
+
+leafMap3 <- dfplot %>% 
+  leaflet() %>% 
+  addTiles() %>%
+  setView(lat = mean(dfplot$lat, na.rm = TRUE),
+          lng = mean(dfplot$lon, na.rm = TRUE),
+          zoom = 12) %>%
+   addCircleMarkers(lng = ~lon, lat = ~lat,  
+              color = ~user_pal(user), opacity = 0.8, radius = 0.1,
+              label = lapply(labs, htmltools::HTML) ) %>%
+   # addPolylines(lng = ~lon, lat = ~lat, color = ~user_pal(user)) %>%
+   addLayersControl(overlayGroups = c(user_id))
+leafMap3   
+```
+
+```{r ggMapApp, warning=FALSE}
+library(ggplot2)
+library(ggmap)
+```
+
+```{r}
+range(dfplot$lon)
+range(df$lat)
+
+base <- get_map(location = c(-37.1223, -11.0007, -36.9529, -10.8808), 
+                maptype = "hybrid") #"hybrid" is likely googlemap; https://www.openstreetmap.org/export#map=13/-10.9408/-37.0376&layers=C
+
+map3 <- ggmap(base) + 
+   geom_point(data = dfplot, aes(x = lon, y = lat, color = user),
+              shape = 20, cex = 0.25) +
+   geom_path(data = dfplot, aes(x = lon, y = lat, color = user)) +
+   labs(x="Latitude", y="Longitude", title="3 User Tracks - 29 May 2015") +
+   scale_color_manual(values = c("blue", "red", "purple")) +
+   theme_bw() 
+map3
+```
+
+
+
+
