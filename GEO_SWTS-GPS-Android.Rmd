@@ -1,0 +1,218 @@
+---
+title: "SWTS GEO GPS Android"
+author: "J. Dayton"
+date: "5/28/2020"
+output: html_document
+always_allow_html: true
+---
+
+Source of data and the following data description: <https://archive.ics.uci.edu/ml/datasets/GPS+Trajectories>.
+
+*Data Abstract:* The dataset has been feed by Android app called Go!Track. It is available at Goolge Play Store.
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+## STEP 0: Load Libraries
+library(dplyr)
+library(leaflet)
+library(kableExtra)
+library(knitr)
+library(lubridate)
+library(RColorBrewer)
+
+# source("custFunc.R")
+```
+
+### Get the GPS Activity Data
+
+Source of data and the following data description: <https://archive.ics.uci.edu/ml/datasets/GPS+Trajectories>.
+
+*Data Set Information:*
+
+The dataset is composed by two tables. The first table go_track_tracks presents general attributes and each instance has one trajectory that is represented by the table go_track_trackspoints.
+
+*Attribute Information:*
+
+(1) go_track_tracks.csv: a list of trajectories
+* id_android - it represents the device used to capture the instance;
+* speed - it represents the average speed (Km/H)
+* distance - it represent the total distance (Km)
+* rating - it is an evaluation parameter. Evaluation the traffic is a way to verify the volunteers perception about the traffic during the travel, in other words, if volunteers move to some place and face traffic jam, maybe they will evaluate 'bad'. (3- good, 2- normal, 1-bad).
+* rating_bus - it is other evaluation parameter. (1 - The amount of people inside the bus is little, 2 - The bus is not crowded, 3- The bus is crowded.
+* rating_weather - it is another evaluation parameter. ( 2- sunny, 1- raining).
+* car_or_bus - (1 - car, 2-bus)
+* linha - information about the bus that does the pathway
+
+(2) go_track_trackspoints.csv: localization points of each trajectory
+* id: unique key to identify each point
+* latitude: latitude from where the point is
+* longitude: longitude from where the point is
+* track_id: identify the trajectory which the point belong
+* time: datetime when the point was collected (GMT-3)
+
+```{r getData}
+## STEP 1: Import relevant data set.
+##Load the data
+dfTracks <- read.csv("./GPS_Trajectory/go_track_tracks.csv", 
+                     stringsAsFactors = FALSE)
+dfPoints <- read.csv("./GPS_Trajectory/go_track_trackspoints.csv", 
+                     stringsAsFactors = FALSE)
+```
+
+```{r renameSort, eval=TRUE, include=FALSE}
+### Clean Data
+#Check for NA values and richness of 'tracks'.
+tabTracks <- kable(head(dfTracks), padding = 0, row.names = FALSE) %>%
+   kable_styling(latex_options = c("striped", "scale_down"))
+tabPoints <- kable(head(dfPoints), padding = 0, row.names = FALSE) %>%
+   kable_styling(latex_options = c("striped", "scale_down"))
+
+#Rename 'id' to 'index' for dfPoints to elleviate confusion, for this file we want 'track_id'
+dfPoints <- dfPoints %>% rename(index = id, id = track_id)
+
+#order the two data frames and check to ensure that the respective ID's align
+dfPoints <- dfPoints %>% arrange(id)
+dfTracks <- dfTracks %>% arrange(id)
+
+#Check which id's will not align, and what index they are for diagnosis
+which(!(unique(dfTracks$id) == unique(dfPoints$id)))
+sum(!(unique(dfTracks$id) == unique(dfPoints$id)))
+# unique(dfTracks$id)
+# unique(dfPoints$track_id)
+# summary(dfTracks)
+# summary(dfPoints)
+```
+### Data table for Tracks data:
+This data table links the user to the actual GPS track.  Provides information such as users, speeds, mode of transportation, and weather.
+```{r tabTrack}
+tabTracks
+```
+### Data table for Points data:
+This data table contains all of the GPS tracks for the 28 Android users.  Provides date, time, and locations.
+```{r tabPoints}
+tabPoints
+```
+### Combine data:
+The data is combined/joined by the user ID to achieve a complete data set of analysis.
+``` {r joinDFs}
+## STEP 2. Aggregate data by country (or other location).
+#Join based on 'id' 
+df <- left_join(dfPoints, dfTracks, by = "id")
+rm(dfPoints); rm(dfTracks)
+
+df <- df %>%
+   rename(user = id_android, date_time = time.x, lat = latitude, lon = longitude) %>%
+   select(id, user, lat, lon, date_time)
+#Fix the time variable
+df$date_time <- ymd_hms(df$date_time)
+#Fix user from 0-27, to 1-28 and make catagorical (factor)
+df$user <- as.factor(df$user + 1)
+
+# dim(df)
+tabDf <- tabTracks <- kable(head(df), padding = 0, row.names = FALSE) %>%
+   kable_styling(latex_options = c("striped", "scale_down"))
+tabDf
+```
+```{r baseMapRange, include=FALSE, eval=TRUE}
+## STEP 3. Merge data from data set to map data.
+
+## Find the range of Lat and Lon
+range(df$lon)
+range(df$lat)
+```
+
+### Initial Map Plot of All Android Tracks
+``` {r plotBase, warning=FALSE}
+## STEP 4. Create the plot(s).
+labs <- lapply(seq(nrow(df)), function(i) {
+   paste0( '<b>USER: </b>', df[i, "user"], '</br>',
+           '<b>DATE: </b>', format(df[i, "date_time"], format="%d %b %y"), '</br>',
+           '<b>TIME: </b>', format(df[i, "date_time"], format = "%H:%M"), '</br>' ) 
+   } )
+
+user_id <- unique(df$user)
+user_pal <- colorFactor(c(brewer.pal(n = length(user_id), 
+                                     name = "Dark2")), 
+                        user_id) #Accent, Dark2, Paired, Pastel1, Pastel2, Set1, Set2, Set3.
+
+leafMap2 <- df %>% 
+  leaflet() %>% 
+  addTiles() %>%
+   setView(lat = -10.93209,
+          lng = -37.05808,
+          zoom = 12) %>%
+   addCircleMarkers(lng = ~lon, lat = ~lat,  
+              color = ~user_pal(user), opacity = 1, radius = 0.15,
+              label = lapply(labs, htmltools::HTML) ) %>%
+   addControl("<b>Android GPS Tracks</b>", 
+             position = "topright")
+leafMap2
+```
+
+The above map is too busy, we have to refine the information we are looking to garner.  For example, we are looking for users that could have made contact on 29 May 2015.  Who are they?  Where were they likely to meet?
+
+### Refined Android Plot of Tracks (leaflet)
+```{r simplifiedPlot}
+## STEP 4. Create the plot(s).
+dfplot <- df %>%
+   filter(format(date_time, format = "%m-%d-%Y") == "05-29-2015") %>%
+   arrange(user, date_time) 
+
+dfplot$user <- plyr::revalue(dfplot$user, c("2" = "Alison", "11" = "Rodd", 
+                                               "13" = "Gregory"))   
+dfplot$user <- as.factor(as.character(dfplot$user))
+
+labs <- lapply(seq(nrow(dfplot)), function(i) {
+   paste0( '<p><b>USER: </b>', dfplot[i, "user"],
+           '</p><p><b>DATE: </b>', format(dfplot[i, "date_time"], format="%d %b %y"), 
+           '</p><p><b>TIME: </b>', format(dfplot[i, "date_time"], format = "%H:%M"), 
+           '</p>' ) 
+   } )
+
+user_id <- unique(dfplot$user)
+user_pal <- colorFactor(c(brewer.pal(n = length(user_id), 
+                                     name = "Set1")), 
+                        user_id) #Accent, Dark2, Paired, Pastel1, Pastel2, Set1, Set2, Set3.
+
+leafMap3 <- dfplot %>% 
+  leaflet() %>% 
+  addTiles() %>%
+  setView(lat = mean(dfplot$lat, na.rm = TRUE),
+          lng = mean(dfplot$lon, na.rm = TRUE),
+          zoom = 12) %>%
+   addCircleMarkers(lng = ~lon, lat = ~lat,  
+              color = ~user_pal(user), opacity = 0.8, radius = 0.1,
+              label = lapply(labs, htmltools::HTML) ) %>%
+   addLegend(position = "bottomright", pal = user_pal, values = user_id, 
+            # labFormat = labelFormat(digits = 1),
+            title = "User:") %>%
+   addControl("<b>Android GPS Tracks for 29 May 2015</b>", 
+             position = "topright")
+   
+leafMap3   
+```
+
+```{r ggMapApp, warning=FALSE, eval=TRUE, include=FALSE}
+library(ggplot2)
+library(ggmap)
+```
+### Refined Android Plot of Tracks (ggmap)
+```{r ggmapPlotSetup, eval=TRUE, include=FALSE}
+range(dfplot$lon)
+range(df$lat)
+
+base <- get_map(location = c(-37.1223, -11.0007, -36.9529, -10.8808), 
+                maptype = "hybrid") #"hybrid" is likely googlemap; https://www.openstreetmap.org/export#map=13/-10.9408/-37.0376&layers=C
+
+map3 <- ggmap(base) + 
+   geom_point(data = dfplot, aes(x = lon, y = lat, color = user),
+              shape = 20, cex = 0.25) +
+   geom_path(data = dfplot, aes(x = lon, y = lat, color = user)) +
+   labs(x="Latitude", y="Longitude", title="Android GPS Tracks for 29 May 2015") +
+   scale_color_manual(values = c("blue", "red", "purple")) +
+   theme_bw() 
+```
+```{r map3disp, warning=FALSE}
+map3
+```
+
